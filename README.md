@@ -29,7 +29,8 @@ Results go into a cache, never next to the original:
 `/media/internal/.cache/org.webosports.service.office/<hash>.<format>`, the
 hash made from the source's path, device, inode, size and modification time.
 A changed source gets a new name, so a file in the cache is never replaced -
-results are published with link(2), which cannot overwrite - and asking again
+results are published with link(2), which cannot overwrite (on vfat, which has
+no hard links, as on the TouchPad, with a rename that cannot either) - and asking again
 for the same document is answered from the cache. The cache is kept under
 256 MB, oldest results first. The Library of the Documents app does not walk
 hidden folders, so the cache does not show up there.

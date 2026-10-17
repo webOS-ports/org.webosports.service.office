@@ -14,6 +14,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+/* renameat2() and RENAME_NOREPLACE */
+#define _GNU_SOURCE
+
 #include "convert.h"
 
 #include <dirent.h>
@@ -21,6 +24,7 @@
 #include <fcntl.h>
 #include <glib.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -298,9 +302,59 @@ out:
 	return copy;
 }
 
+int office_publish_claim(const char *staged, const char *target)
+{
+	/* Flawfinder: ignore - O_EXCL|O_NOFOLLOW: a new name of ours, or nothing */
+	int fd = open(target, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+	int err;
+
+	if (fd < 0)
+	{
+		return errno;
+	}
+
+	close(fd);
+
+	if (rename(staged, target) == 0)
+	{
+		return 0;
+	}
+
+	err = errno;
+	unlink(target);
+	return err;
+}
+
+int office_publish_move(const char *staged, const char *target)
+{
+	if (renameat2(AT_FDCWD, staged, AT_FDCWD, target, RENAME_NOREPLACE) == 0)
+	{
+		return 0;
+	}
+
+	/* A kernel or file system without RENAME_NOREPLACE (the TouchPad's 3.4 vfat) */
+	if (errno == EINVAL || errno == ENOSYS)
+	{
+		return office_publish_claim(staged, target);
+	}
+
+	return errno;
+}
+
 int office_publish(const char *staged, const char *target)
 {
-	return link(staged, target) == 0 ? 0 : errno;
+	if (link(staged, target) == 0)
+	{
+		return 0;
+	}
+
+	/* No hard links here (vfat, as /media/internal is on the TouchPad): moved instead */
+	if (errno == EPERM || errno == EOPNOTSUPP)
+	{
+		return office_publish_move(staged, target);
+	}
+
+	return errno;
 }
 
 /*

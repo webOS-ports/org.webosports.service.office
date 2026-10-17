@@ -352,6 +352,50 @@ static void test_publish(void)
 	g_free(target);
 }
 
+/* As on vfat, where publishing moves the result */
+static void test_publish_move(void)
+{
+	char *staged = at("moved.odt"), *target = at("moved-target.odt"), *data = NULL;
+
+	put(staged, "first");
+	CHECK(office_publish_move(staged, target) == 0, "move");
+	CHECK(!g_file_test(staged, G_FILE_TEST_EXISTS), "the staged file is moved");
+	put(staged, "second");
+	CHECK(office_publish_move(staged, target) == EEXIST, "second move must not replace");
+	CHECK(g_file_get_contents(target, &data, NULL, NULL) && strcmp(data, "first") == 0,
+	      "target replaced: %s", data);
+	g_free(data);
+	g_free(staged);
+	g_free(target);
+}
+
+/* As on the TouchPad's kernel, which has no RENAME_NOREPLACE */
+static void test_publish_claim(void)
+{
+	char *staged = at("claimed.odt"), *target = at("claimed-target.odt"), *data = NULL;
+
+	put(staged, "first");
+	CHECK(office_publish_claim(staged, target) == 0, "claim");
+	CHECK(!g_file_test(staged, G_FILE_TEST_EXISTS), "the staged file is moved");
+	CHECK(g_file_get_contents(target, &data, NULL, NULL) && strcmp(data, "first") == 0, "target: %s", data);
+	g_free(data);
+	data = NULL;
+	put(staged, "second");
+	CHECK(office_publish_claim(staged, target) == EEXIST, "second claim must not replace");
+	CHECK(g_file_get_contents(target, &data, NULL, NULL) && strcmp(data, "first") == 0,
+	      "target replaced: %s", data);
+	CHECK(g_file_test(staged, G_FILE_TEST_EXISTS), "the refused file is left");
+	g_free(data);
+	g_free(target);
+	/* The rename fails: the claimed name is not left behind, empty */
+	target = at("claimed-gone.odt");
+	unlink(staged);
+	CHECK(office_publish_claim(staged, target) == ENOENT, "nothing to publish");
+	CHECK(!g_file_test(target, G_FILE_TEST_EXISTS), "an empty claimed file is left");
+	g_free(staged);
+	g_free(target);
+}
+
 static void test_remove_tree(void)
 {
 	char *dir = at("tree"), *deep = g_build_filename(dir, "a", "b", NULL);
@@ -516,6 +560,8 @@ int main(int argc, char **argv)
 	test_extension();
 	test_stage();
 	test_publish();
+	test_publish_move();
+	test_publish_claim();
 	test_remove_tree();
 	test_trim();
 	test_protocol_lines();
