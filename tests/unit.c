@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Unit tests for src/convert.c, in a work directory of their own:
+ * Unit tests for src/convert.c and src/protocol.c, in a work directory of their own:
  *
  *   unit <work-dir>
  *
@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "../src/convert.h"
+#include "../src/protocol.h"
 
 static int failures = 0;
 
@@ -436,6 +437,67 @@ static void test_trim(void)
 	g_free(dir);
 }
 
+/* Fields with tabs, newlines, backslashes and UTF-8 come back as they went */
+static void test_protocol_lines(void)
+{
+	const char *const fields[] = { "R", "7", "ok", "a\tb", "line\nbreak", "back\\slash", "caf\xc3\xa9", "" };
+	char *line = office_proto_join(fields, G_N_ELEMENTS(fields));
+	char **back;
+	int n = 0;
+
+	CHECK(g_str_has_suffix(line, "\n") && strchr(line, '\n') == line + strlen(line) - 1, "one line: %s", line);
+	CHECK(strchr(line, '\t') != NULL, "tab separated");
+	line[strlen(line) - 1] = '\0';
+	back = office_proto_split(line, &n);
+	CHECK(back && n == (int)G_N_ELEMENTS(fields), "%d fields", n);
+	for (int i = 0; back && i < n && i < (int)G_N_ELEMENTS(fields); i++)
+	{
+		CHECK(strcmp(back[i], fields[i]) == 0, "field %d: \"%s\", want \"%s\"", i, back[i], fields[i]);
+	}
+	g_strfreev(back);
+	g_free(line);
+
+	/* An empty line, and one that is too long, are not split */
+	back = office_proto_split("", &n);
+	CHECK(back == NULL && n == 0, "empty line split");
+	{
+		char *huge = g_malloc(OFFICE_PROTO_MAX_LINE + 2);
+		memset(huge, 'x', OFFICE_PROTO_MAX_LINE + 1);
+		huge[OFFICE_PROTO_MAX_LINE + 1] = '\0';
+		back = office_proto_split(huge, &n);
+		CHECK(back == NULL, "too long a line split");
+		g_free(huge);
+	}
+}
+
+static void test_protocol_ints(void)
+{
+	long v = 99;
+
+	CHECK(office_proto_int("42", 0, 100, &v) && v == 42, "42");
+	CHECK(office_proto_int("-5", -10, 10, &v) && v == -5, "-5");
+	CHECK(!office_proto_int("101", 0, 100, &v), "over max");
+	CHECK(!office_proto_int("-1", 0, 100, &v), "under min");
+	CHECK(!office_proto_int("4x", 0, 100, &v), "trailing junk");
+	CHECK(!office_proto_int("", 0, 100, &v), "empty");
+	CHECK(!office_proto_int(NULL, 0, 100, &v), "NULL");
+	CHECK(!office_proto_int("99999999999999999999", 0, 100, &v), "overflow");
+	CHECK(v == -5, "a failed parse leaves the value");
+}
+
+static void test_protocol_uno(void)
+{
+	CHECK(office_uno_allowed(".uno:Bold") && office_uno_allowed(".uno:Undo") && office_uno_allowed(".uno:InsertPage"),
+	      "editing commands");
+	CHECK(!office_uno_allowed(".uno:SaveAs") && !office_uno_allowed(".uno:Save") && !office_uno_allowed(".uno:Open") &&
+	      !office_uno_allowed(".uno:Print") && !office_uno_allowed(".uno:ExportToPDF") &&
+	      !office_uno_allowed(".uno:InsertGraphic") && !office_uno_allowed(".uno:RunMacro"), "file and macro commands");
+	CHECK(!office_uno_allowed(".uno:Bold ") && !office_uno_allowed(".uno:bold") && !office_uno_allowed("") &&
+	      !office_uno_allowed(NULL), "near misses");
+	CHECK(strcmp(office_callback_name(0), "invalidate") == 0 && strcmp(office_callback_name(8), "state") == 0 &&
+	      strcmp(office_callback_name(999), "other") == 0, "callback names");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2)
@@ -456,6 +518,9 @@ int main(int argc, char **argv)
 	test_publish();
 	test_remove_tree();
 	test_trim();
+	test_protocol_lines();
+	test_protocol_ints();
+	test_protocol_uno();
 
 	g_free(root);
 	free(work);

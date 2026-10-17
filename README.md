@@ -3,7 +3,7 @@ org.webosports.service.office
 
 Summary
 -------
-LuneOS service that converts office documents with LibreOfficeKit.
+LuneOS service that converts and edits office documents with LibreOfficeKit.
 
 Description
 -----------
@@ -75,42 +75,55 @@ Errors: `{"returnValue": false, "errorCode": ..., "errorText": ...}`
 The method is in the `office.operation` group; an app asks for it in
 appinfo.json's `requiredPermissions`.
 
-Next: editing
--------------
+Editing sessions
+----------------
 
-The same engine can edit, as Collabora Office does on Android and iOS: the
-document stays loaded in a long-lived LibreOfficeKit process, which renders
-tiles and takes input, while the web app draws the tiles and its own
-toolbars. Planned as a second process type next to `office-convert`, one per
-open document, with the session methods on `officed`:
+The same engine edits, as Collabora Office does on Android and iOS: the
+document stays loaded in an `office-session` process (one per open document,
+at most 2 at once), which renders tiles and takes input, while the app draws
+the tiles and its own key bar. The source is staged as for `convert`.
 
 | Method | Does | LibreOfficeKit |
 |---|---|---|
-| `open {source}` | loads the document; `{session, kind, parts, width, height}` (twips) | `documentLoad`, `initializeForRendering`, `getDocumentSize`, `getParts` |
-| `paintTile {session, part, x, y, w, h, scale}` | renders a 256 px tile into shared memory or a PNG in the session directory; `{file}` | `setPart`, `paintTile` (RGBA with `--enable-cairo-rgba`) |
-| `postKey {session, type, char, key}` | typing, from the virtual keyboard | `postKeyEvent` |
-| `postMouse {session, type, x, y, count, buttons}` | taps, selection handles | `postMouseEvent` |
-| `uno {session, command, args}` | `.uno:Bold`, `.uno:Undo`, `.uno:InsertTable`... | `postUnoCommand` |
-| `events {session}` (subscribe) | invalidated rectangles, cursor and selection, state of the toolbar's commands | `registerCallback`: `LOK_CALLBACK_INVALIDATE_TILES`, `..._CURSOR`, `..._STATE_CHANGED`, `..._TEXT_SELECTION` |
-| `save {session, format}` | into the cache, as `convert`; the app then offers "Save a Copy" | `saveAs` |
-| `close {session}` | ends the process | `destroy` |
+| `open {source}` | loads the document; `{session, kind, parts, part, width, height, tileMode}`, sizes in twips | `documentLoad`, `initializeForRendering`, `getDocumentSize`, `getParts` |
+| `events {session, subscribe: true}` | `{event, type, payload}` as LibreOffice calls back (`invalidate`, `cursor`, `cursorVisible`, `selection`, `state`, `documentSize`, `part`...), and `{event: "closed", reason}` at the end | `registerCallback` |
+| `paintTile {session, part, x, y, width, height, pixelWidth, pixelHeight}` | a tile, twips in, at most 1024 px a side; `{file}`: `pixelWidth * pixelHeight * 4` bytes in `tileMode`'s order (`rgba`), in the session's directory in the cache | `paintPartTile` |
+| `postKey {session, type: "input"\|"up", charCode, keyCode}` | keys (Enter 1280, Backspace 1283, the arrows...) | `postKeyEvent` |
+| `postMouse {session, type: "down"\|"up"\|"move", x, y, count, buttons, modifiers}` | taps, twips | `postMouseEvent` |
+| `extTextInput {session, type: "preedit"\|"commit", text}` | text from the keyboard, and a keypad's T9 composition | `postWindowExtTextInputEvent`; committed text with no composition under way is typed as keys, which Impress needs to start editing a text box |
+| `uno {session, command, arguments}` | formatting and editing only: `.uno:Bold`, `.uno:Undo`, `.uno:DefaultBullet`, `.uno:InsertPage`...; nothing that opens, saves, prints or runs macros | `postUnoCommand` |
+| `setPart {session, part}`, `info {session}` | a slide or sheet; `{parts, part, width, height}` | `setPart`, `getPart` |
+| `save {session, format}` | a copy into the cache, as `convert`; `{target}`. The app offers it as "Save a Copy" | `saveAs` |
+| `close {session}` | ends the process | |
 
-Each call goes to the session's process over a pipe; LibreOfficeKit is used
-from that process's one thread only. Tiles are cached by the app and
-re-requested only for invalidated rectangles.
+A session is closed, and its directory removed, by `close`, when its last
+`events` subscriber goes (the app closed or reloaded), after 10 minutes
+without a request, when an answer takes more than 30 seconds, and when the
+service stops. Errors are as for `convert`, plus `badSession` (no such
+session) and `busy` (2 documents are already open).
+
+The `office-session` process speaks to `officed` in lines over its stdin and
+stdout (`src/protocol.h`), and enables `LOK_FEATURE_PART_IN_INVALIDATION_CALLBACK`:
+without it LibreOffice sends no invalidation at all, as it only invalidates
+tiles it painted, which it keeps by part.
 
 Checks
 ------
 
 - `tests/run.sh`: `tests/unit.c` against `src/convert.c` (the path checks,
   the cache names, staging with a swapped file and a swapped link, publishing
-  that never replaces, tree removal that does not follow links, trimming),
+  that never replaces, tree removal that does not follow links, trimming)
+  and `src/protocol.c` (the session lines, numbers, the UNO allow-list),
   and the real `src/officed.c` against stand-ins for luna-service2 and
   pbnjson, spawning the real `office-convert` built against a fake
   LibreOfficeKit (`tests/fakelok.cxx`): conversion and the cache, coalescing,
   every error, a changed source, a full queue, LibreOffice failing to load,
   to save, lying about saving, crashing, hanging and not starting, SIGTERM
   with work queued, a lost hub, job directories left by a killed officed.
+  Editing sessions against the same fake: tiles, keys, taps, typing and T9
+  preedit, UNO commands and the allow-list, slides, saving, every bad request,
+  a crash, a hang, the idle timeout, a subscriber that goes, a failed load and
+  SIGTERM.
   Each under ASan+UBSan (gcc and clang), TSan and valgrind memcheck, checking
   that every call is answered once, from the main context, and that no
   message, JSON value, descriptor or job directory is left behind.

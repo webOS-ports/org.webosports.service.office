@@ -20,14 +20,15 @@ pkg_check_modules(PBNJSON_C REQUIRED pbnjson_c)
 find_path(LOK_INCLUDE_DIR LibreOfficeKit/LibreOfficeKitInit.h REQUIRED)
 set(LO_PROGRAM_DIR "/usr/lib/libreoffice/program" CACHE STRING "LibreOffice's program directory")
 set(OFFICE_HELPER "${WEBOS_INSTALL_LIBEXEC}/office-convert")
+set(OFFICE_SESSION_HELPER "${WEBOS_INSTALL_LIBEXEC}/office-session")
 
 include_directories(${GLIB2_INCLUDE_DIRS})
 
 webos_add_compiler_flags(ALL -Wall -Wextra -Wno-unused-parameter)
 
-add_executable(officed src/officed.c src/convert.c)
+add_executable(officed src/officed.c src/convert.c src/protocol.c)
 target_include_directories(officed PRIVATE ${LS2_INCLUDE_DIRS} ${PBNJSON_C_INCLUDE_DIRS})
-target_compile_definitions(officed PRIVATE OFFICE_HELPER="${OFFICE_HELPER}")
+target_compile_definitions(officed PRIVATE OFFICE_HELPER="${OFFICE_HELPER}" OFFICE_SESSION_HELPER="${OFFICE_SESSION_HELPER}")
 target_link_libraries(officed ${GLIB2_LDFLAGS} ${LS2_LDFLAGS} ${PBNJSON_C_LDFLAGS})
 
 add_executable(office-convert src/office-convert.cxx src/convert.c)
@@ -36,5 +37,12 @@ target_compile_definitions(office-convert PRIVATE LO_PROGRAM_DIR="${LO_PROGRAM_D
 target_link_libraries(office-convert ${GLIB2_LDFLAGS} ${CMAKE_DL_LIBS})
 
 install(TARGETS officed DESTINATION ${WEBOS_INSTALL_SBINDIR})
+add_executable(office-session src/office-session.cxx src/convert.c src/protocol.c)
+target_include_directories(office-session PRIVATE ${LOK_INCLUDE_DIR})
+target_compile_definitions(office-session PRIVATE LO_PROGRAM_DIR="${LO_PROGRAM_DIR}")
+find_package(Threads REQUIRED)
+target_link_libraries(office-session ${GLIB2_LDFLAGS} ${CMAKE_DL_LIBS} Threads::Threads)
+
 install(TARGETS office-convert DESTINATION ${WEBOS_INSTALL_LIBEXEC})
+install(TARGETS office-session DESTINATION ${WEBOS_INSTALL_LIBEXEC})
 webos_build_system_bus_files()

@@ -16,6 +16,7 @@ typedef struct LSMessage LSMessage;
 typedef struct { int error_code; char *message; } LSError;
 typedef bool (*LSMethodFunction)(LSHandle *sh, LSMessage *msg, void *ctx);
 typedef void (*LSDisconnectHandler)(LSHandle *sh, void *ctx);
+typedef bool (*LSFilterFunc)(LSHandle *sh, LSMessage *msg, void *ctx);
 typedef enum { LUNA_METHOD_FLAGS_NONE = 0 } LSMethodFlags;
 typedef struct { const char *name; LSMethodFunction function; LSMethodFlags flags; } LSMethod;
 
@@ -33,5 +34,8 @@ const char *LSMessageGetPayload(LSMessage *msg);
 bool LSMessageIsSubscription(LSMessage *msg);
 bool LSSubscriptionReply(LSHandle *sh, const char *key, const char *payload, LSError *error);
 bool LSSubscriptionProcess(LSHandle *sh, LSMessage *msg, bool *subscribed, LSError *error);
+bool LSSubscriptionAdd(LSHandle *sh, const char *key, LSMessage *msg, LSError *error);
+bool LSSubscriptionSetCancelFunction(LSHandle *sh, LSFilterFunc cancelFunction, void *ctx, LSError *error);
+unsigned int LSSubscriptionGetHandleSubscribersCount(LSHandle *sh, const char *key);
 void LSMessageRef(LSMessage *msg);
 void LSMessageUnref(LSMessage *msg);
