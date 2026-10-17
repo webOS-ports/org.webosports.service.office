@@ -29,8 +29,10 @@ LOK_INCLUDE=${LOK_INCLUDE:?set LOK_INCLUDE to the directory holding LibreOfficeK
 GLIB_CFLAGS=$(pkg-config --cflags glib-2.0)
 GLIB_LIBS=$(pkg-config --libs glib-2.0)
 WARN="-Wall -Wextra -Wno-unused-parameter -Werror"
-MODES="convert coalesce errors kind changed busy sigterm disconnect sweep
-       fail-loadfail fail-savefail fail-savelie fail-crash fail-hang fail-initfail"
+MODES=${MODES:-"convert coalesce errors kind changed busy sigterm disconnect sweep
+       fail-loadfail fail-savefail fail-savelie fail-crash fail-hang fail-initfail"}
+# BUILDS: a subset of "asan-gcc asan-clang tsan plain", for quick runs
+BUILDS=${BUILDS:-"asan-gcc asan-clang tsan plain"}
 fail=0
 
 export ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:strict_string_checks=1:detect_stack_use_after_return=1
@@ -83,11 +85,13 @@ run() {
 	done
 }
 
-build asan-gcc gcc g++ -fsanitize=address,undefined -fno-sanitize-recover=all && run asan-gcc
-build asan-clang clang clang++ -fsanitize=address,undefined,integer,nullability -fno-sanitize-recover=all \
+wanted() { case " $BUILDS " in *" $1 "*) return 0 ;; esac; return 1; }
+
+wanted asan-gcc && build asan-gcc gcc g++ -fsanitize=address,undefined -fno-sanitize-recover=all && run asan-gcc
+wanted asan-clang && build asan-clang clang clang++ -fsanitize=address,undefined,integer,nullability -fno-sanitize-recover=all \
 	-fno-sanitize=unsigned-integer-overflow,unsigned-shift-base && run asan-clang
-build tsan clang clang++ -fsanitize=thread && run tsan
-build plain gcc g++ && {
+wanted tsan && build tsan clang clang++ -fsanitize=thread && run tsan
+wanted plain && build plain gcc g++ && {
 	if command -v valgrind >/dev/null 2>&1; then
 		run plain valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect \
 			--errors-for-leak-kinds=definite,indirect --quiet
