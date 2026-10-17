@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cmake_minimum_required(VERSION 3.10)
-project(org.webosports.service.office C)
+project(org.webosports.service.office C CXX)
 
 include(webOS/webOS)
 webos_modules_init(1 0 0 QUALIFIER RC4)
@@ -30,7 +30,7 @@ target_include_directories(officed PRIVATE ${LS2_INCLUDE_DIRS} ${PBNJSON_C_INCLU
 target_compile_definitions(officed PRIVATE OFFICE_HELPER="${OFFICE_HELPER}")
 target_link_libraries(officed ${GLIB2_LDFLAGS} ${LS2_LDFLAGS} ${PBNJSON_C_LDFLAGS})
 
-add_executable(office-convert src/office-convert.c src/convert.c)
+add_executable(office-convert src/office-convert.cxx src/convert.c)
 target_include_directories(office-convert PRIVATE ${LOK_INCLUDE_DIR})
 target_compile_definitions(office-convert PRIVATE LO_PROGRAM_DIR="${LO_PROGRAM_DIR}")
 target_link_libraries(office-convert ${GLIB2_LDFLAGS} ${CMAKE_DL_LIBS})
