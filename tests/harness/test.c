@@ -327,17 +327,36 @@ static void start_busy(void)
 	}
 	/* One running, MAX_QUEUED waiting, the last one turned away */
 	CHECK(answered == 1 && reply_has(0, "\"errorCode\":\"busy\""), "busy: %s", reply_at(0));
+
+	/* A result already in the cache is still handed out, queue or not */
+	{
+		OfficeSource src;
+		const char *error = NULL;
+		char *path = doc_path("cached.doc"), *name, *target;
+
+		put_doc("cached.doc", "x");
+		g_assert(office_source_check(OFFICE_ROOT, path, OFFICE_MAX_SOURCE, &src, &error));
+		name = office_cache_name(&src, office_format_find("odt"));
+		target = g_build_filename(OFFICE_CACHE_DIR, name, NULL);
+		g_assert(g_file_set_contents(target, "made earlier", -1, NULL));
+		convert("cached.doc", "odt");
+		CHECK(answered == 2 && reply_has(1, "\"cached\":true"), "cached while busy: %s", reply_at(1));
+		office_source_clear(&src);
+		g_free(target);
+		g_free(name);
+		g_free(path);
+	}
 }
 
 static void check_busy(void)
 {
 	int timeouts = 0;
 
-	for (guint i = 1; i < replies->len; i++)
+	for (guint i = 2; i < replies->len; i++)
 	{
 		timeouts += reply_has(i, "\"errorCode\":\"timeout\"");
 	}
-	CHECK(replies->len == MAX_QUEUED + 2 && timeouts == MAX_QUEUED + 1, "%u replies, %d timeouts", replies->len, timeouts);
+	CHECK(replies->len == MAX_QUEUED + 3 && timeouts == MAX_QUEUED + 1, "%u replies, %d timeouts", replies->len, timeouts);
 	CHECK(loads() == MAX_QUEUED + 1, "%d loads", loads());
 }
 
