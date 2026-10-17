@@ -106,7 +106,10 @@ session) and `busy` (2 documents are already open).
 The `office-session` process speaks to `officed` in lines over its stdin and
 stdout (`src/protocol.h`), and enables `LOK_FEATURE_PART_IN_INVALIDATION_CALLBACK`:
 without it LibreOffice sends no invalidation at all, as it only invalidates
-tiles it painted, which it keeps by part.
+tiles it painted, which it keeps by part. The first key typed into a slide's
+text box starts editing it; while LibreOffice does that, a key posted after
+it can overtake the ones posted before it, so `office-session` sends that
+key alone and waits until LibreOffice shows the cursor before going on.
 
 Checks
 ------

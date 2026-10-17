@@ -38,6 +38,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -59,7 +60,8 @@ typedef struct
 	bool bold;
 	GString *typed;
 	char *preedit;     /* the composition in progress, as LibreOffice keeps it */
-	bool editing;      /* a presentation: a typed key starts editing the selected text box */
+	std::atomic<bool> editing;    /* a presentation: a typed key starts editing the selected text box */
+	std::atomic<bool> starting;   /* ... which takes LibreOffice a while: see doc_key() */
 	LibreOfficeKitCallback callback;
 	void *callback_data;
 } FakeDoc;
@@ -233,7 +235,26 @@ static void doc_key(LibreOfficeKitDocument *pThis, int type, int char_code, int 
 	FakeDoc *doc = reinterpret_cast<FakeDoc *>(pThis);
 	char utf8[8] = {};
 
-	if (type == LOK_KEYEVENT_KEYINPUT)
+	/*
+	 * As Impress: the first key into a slide's selected text box starts
+	 * editing it, and says so (the cursor shown) a while later, from its own
+	 * thread. A key that comes before that may be handled out of its order:
+	 * the fake marks it with '#'.
+	 */
+	if (type == LOK_KEYEVENT_KEYINPUT && doc->starting)
+		typed_append(doc, "#");
+	if (type == LOK_KEYEVENT_KEYINPUT && doc->kind == LOK_DOCTYPE_PRESENTATION && !doc->editing && !doc->starting)
+	{
+		doc->starting = true;
+		std::thread([doc]() {
+			g_usleep(100 * 1000);
+			doc->editing = true;
+			doc->starting = false;
+			if (doc->callback)
+				doc->callback(LOK_CALLBACK_CURSOR_VISIBLE, "true", doc->callback_data);
+		}).detach();
+	}
+	else if (type == LOK_KEYEVENT_KEYINPUT)
 		doc->editing = true;
 	/* A key typed during a composition ends it, its text kept */
 	if (type == LOK_KEYEVENT_KEYINPUT && doc->preedit)

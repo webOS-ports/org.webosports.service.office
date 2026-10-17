@@ -44,6 +44,8 @@
 #include <LibreOfficeKit/LibreOfficeKit.hxx>
 
 #include <cerrno>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -137,9 +139,40 @@ void answer_err(const std::string &id, const char *code, const char *text)
 	emit({ "R", id, "err", code, text });
 }
 
+/*
+ * Whether a text box is being edited, as LibreOffice's cursor says: typing
+ * into a slide waits on it (Session::text()).
+ */
+std::mutex edit_lock;
+std::condition_variable edit_changed;
+bool editing = false;
+
 void on_callback(int type, const char *payload, void *data)
 {
+	if (type == LOK_CALLBACK_CURSOR_VISIBLE)
+	{
+		const std::lock_guard<std::mutex> hold(edit_lock);
+
+		editing = payload && strcmp(payload, "true") == 0;
+		edit_changed.notify_all();
+	}
+
 	emit({ "E", std::to_string(type), payload ? payload : "" });
+}
+
+/* Until LibreOffice edits a text box, for up to 2 s */
+void wait_for_editing()
+{
+	std::unique_lock<std::mutex> hold(edit_lock);
+
+	(void)edit_changed.wait_for(hold, std::chrono::seconds(2), [] { return editing; });
+}
+
+bool is_editing()
+{
+	const std::lock_guard<std::mutex> hold(edit_lock);
+
+	return editing;
 }
 
 GStr to_url(const char *path)
@@ -227,7 +260,7 @@ public:
 		else if (strcmp(cmd, "key") == 0 && n == 5 && ints(f + 2, 3, v) &&
 		         (v[0] == LOK_KEYEVENT_KEYINPUT || v[0] == LOK_KEYEVENT_KEYUP))
 		{
-			doc_->postKeyEvent(static_cast<int>(v[0]), static_cast<int>(v[1]), static_cast<int>(v[2]));
+			key(static_cast<int>(v[0]), static_cast<int>(v[1]), static_cast<int>(v[2]));
 			answer_ok(id);
 		}
 		else if (strcmp(cmd, "mouse") == 0 && n == 8 && ints(f + 2, 6, v) &&
@@ -287,6 +320,21 @@ private:
 	 * character at a time: Impress takes no composition into a text box that
 	 * is only selected, while a typed key starts editing it, as in every module.
 	 */
+	/* A typed character that starts editing a slide's text box waits for it, as in text() */
+	void key(int type, int char_code, int key_code)
+	{
+		const int kind = doc_->getDocumentType();
+		const bool starts = type == LOK_KEYEVENT_KEYINPUT && char_code > 0 &&
+		                    (kind == LOK_DOCTYPE_PRESENTATION || kind == LOK_DOCTYPE_DRAWING) && !is_editing();
+
+		doc_->postKeyEvent(type, char_code, key_code);
+
+		if (starts)
+		{
+			wait_for_editing();
+		}
+	}
+
 	void text(int type, const char *utf8)
 	{
 		if (type == LOK_EXT_TEXTINPUT)
@@ -304,6 +352,16 @@ private:
 			return;
 		}
 
+		/*
+		 * The first key into a slide's text box that is only selected starts
+		 * editing it, and while LibreOffice does that, a key posted after it
+		 * can be handled before the keys posted before it (seen on the
+		 * TouchPad: "a1bcdef" for "abcdef" then "1"). So that key goes alone,
+		 * and the rest, and the next request, wait until editing has begun.
+		 */
+		const int kind = doc_->getDocumentType();
+		bool starts = (kind == LOK_DOCTYPE_PRESENTATION || kind == LOK_DOCTYPE_DRAWING) && !is_editing();
+
 		for (const char *p = utf8; *p; p = g_utf8_next_char(p))
 		{
 			const int c = static_cast<int>(g_utf8_get_char(p));
@@ -312,6 +370,12 @@ private:
 
 			doc_->postKeyEvent(LOK_KEYEVENT_KEYINPUT, key ? 0 : c, key);
 			doc_->postKeyEvent(LOK_KEYEVENT_KEYUP, key ? 0 : c, key);
+
+			if (starts)
+			{
+				wait_for_editing();
+				starts = false;
+			}
 		}
 	}
 
