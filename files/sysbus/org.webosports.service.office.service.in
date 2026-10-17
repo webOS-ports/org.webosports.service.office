@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.webosports.service.office
+Exec=@WEBOS_INSTALL_SBINDIR@/officed
+Type=dynamic

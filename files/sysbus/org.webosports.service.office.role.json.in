@@ -1,0 +1,13 @@
+{
+    "exeName": "@WEBOS_INSTALL_SBINDIR@/officed",
+    "trustLevel": "oem",
+    "type": "regular",
+    "allowedNames": ["org.webosports.service.office"],
+    "permissions": [
+        {
+            "service": "org.webosports.service.office",
+            "inbound": ["*"],
+            "outbound": []
+        }
+    ]
+}
