@@ -927,6 +927,44 @@ static void y_close(void)
 
 static const Step typing_script[] = { s_open, s_events, y_commit, y_save, y_close, NULL };
 
+/* Copy and paste: a piece of a line pastes inline, as text; lines as OpenDocument */
+static void c_type(void)
+{
+	CHECK(last_has("\"subscribed\":true"), "events: %s", last());
+	scall("extTextInput", "{\"session\":\"%s\",\"type\":\"commit\",\"text\":\"hi\"}", session_id);
+}
+
+static void c_copy(void)
+{
+	CHECK(last_has("\"returnValue\":true"), "before copy: %s", last());
+	scall("uno", "{\"session\":\"%s\",\"command\":\".uno:Copy\"}", session_id);
+}
+
+static void c_paste(void)
+{
+	CHECK(last_has("\"returnValue\":true"), "copy: %s", last());
+	scall("uno", "{\"session\":\"%s\",\"command\":\".uno:Paste\"}", session_id);
+}
+
+static void c_lines(void)
+{
+	CHECK(last_has("\"returnValue\":true"), "paste: %s", last());
+	scall("extTextInput", "{\"session\":\"%s\",\"type\":\"commit\",\"text\":\"\\nz\"}", session_id);
+}
+
+static void c_close(void)
+{
+	char *target = last_value("target"), *data = NULL;
+
+	CHECK(g_file_get_contents(target, &data, NULL, NULL) && g_str_has_suffix(data, "|typed:hihi\nz{ODF:hihi\nz}"),
+	      "saved: %s", data ? data : "(missing)");
+	g_free(data);
+	g_free(target);
+	scall("close", "{\"session\":\"%s\"}", session_id);
+}
+
+static const Step clipboard_script[] = { s_open, s_events, c_type, c_copy, c_paste, c_lines, c_copy, c_paste, y_save, c_close, NULL };
+
 static const char *session_fake_mode = "ok";
 
 static void start_script(void)
@@ -1073,6 +1111,11 @@ int main(int argc, char **argv)
 	else if (strcmp(mode, "session-typing") == 0)
 	{
 		script = typing_script;
+		shim_set_start(start_script);
+	}
+	else if (strcmp(mode, "session-clipboard") == 0)
+	{
+		script = clipboard_script;
 		shim_set_start(start_script);
 	}
 	else if (strcmp(mode, "session-idle") == 0)

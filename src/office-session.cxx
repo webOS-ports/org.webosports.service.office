@@ -51,6 +51,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <glib.h>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -270,6 +271,11 @@ public:
 			                     static_cast<int>(v[3]), static_cast<int>(v[4]), static_cast<int>(v[5]));
 			answer_ok(id);
 		}
+		else if (strcmp(cmd, "uno") == 0 && n == 4 && strcmp(f[2], ".uno:Paste") == 0)
+		{
+			paste();
+			answer_ok(id);
+		}
 		else if (strcmp(cmd, "uno") == 0 && n == 4 && office_uno_allowed(f[2]))
 		{
 			doc_->postUnoCommand(f[2], f[3][0] ? f[3] : nullptr, false);
@@ -320,6 +326,67 @@ private:
 	 * character at a time: Impress takes no composition into a text box that
 	 * is only selected, while a typed key starts editing it, as in every module.
 	 */
+	/*
+	 * Paste what was cut or copied. LibreOffice keeps it (Cut and Copy work),
+	 * but ".uno:Paste" dispatched to it pastes nothing; handing the clipboard's
+	 * contents to paste() does, as Collabora Online pastes. Paragraphs go as
+	 * OpenDocument, which keeps them and their formatting; a piece of one line
+	 * as plain text, as OpenDocument would make a paragraph of it.
+	 */
+	void paste()
+	{
+		static const char *const plain = "text/plain;charset=utf-8";
+		static const char *const rich[] = { "application/vnd.oasis.opendocument.text-flat-xml", "text/rtf", plain };
+		static const char *const inline_text[] = { plain };
+		size_t count = 0;
+		char **mimes = nullptr;
+		size_t *sizes = nullptr;
+		char **streams = nullptr;
+		bool pasted = false;
+
+		if (doc_->getClipboard(nullptr, &count, &mimes, &sizes, &streams))
+		{
+			bool one_line = false;
+
+			for (size_t i = 0; i < count; i++)
+			{
+				if (mimes[i] && streams[i] && strcmp(mimes[i], plain) == 0)
+				{
+					one_line = sizes[i] > 0 && !std::memchr(streams[i], '\n', sizes[i]) && !std::memchr(streams[i], '\r', sizes[i]);
+				}
+			}
+
+			const std::vector<const char *> order = one_line ? std::vector<const char *>(std::begin(inline_text), std::end(inline_text))
+			                                                 : std::vector<const char *>(std::begin(rich), std::end(rich));
+
+			for (const char *want : order)
+			{
+				for (size_t i = 0; i < count && !pasted; i++)
+				{
+					if (mimes[i] && streams[i] && sizes[i] > 0 && strcmp(mimes[i], want) == 0)
+					{
+						pasted = doc_->paste(mimes[i], streams[i], sizes[i]);
+					}
+				}
+			}
+		}
+
+		for (size_t i = 0; i < count; i++)
+		{
+			std::free(mimes[i]);
+			std::free(streams[i]);
+		}
+
+		std::free(static_cast<void *>(mimes));
+		std::free(sizes);
+		std::free(static_cast<void *>(streams));
+
+		if (!pasted)
+		{
+			doc_->postUnoCommand(".uno:Paste", nullptr, false);
+		}
+	}
+
 	/* A typed character that starts editing a slide's text box waits for it, as in text() */
 	void key(int type, int char_code, int key_code)
 	{

@@ -62,6 +62,7 @@ typedef struct
 	char *preedit;     /* the composition in progress, as LibreOffice keeps it */
 	std::atomic<bool> editing;    /* a presentation: a typed key starts editing the selected text box */
 	std::atomic<bool> starting;   /* ... which takes LibreOffice a while: see doc_key() */
+	char *clipboard;   /* what .uno:Copy copied, as plain text */
 	LibreOfficeKitCallback callback;
 	void *callback_data;
 } FakeDoc;
@@ -98,6 +99,7 @@ static void doc_destroy(LibreOfficeKitDocument *pThis)
 	if (doc->typed)
 		g_string_free(doc->typed, TRUE);
 	g_free(doc->preedit);
+	g_free(doc->clipboard);
 	g_free(doc);
 }
 
@@ -265,6 +267,8 @@ static void doc_key(LibreOfficeKitDocument *pThis, int type, int char_code, int 
 	}
 	if (type == LOK_KEYEVENT_KEYINPUT && key_code == 1282)
 		typed_append(doc, "\t");
+	else if (type == LOK_KEYEVENT_KEYINPUT && key_code == 1280)
+		typed_append(doc, "\n");
 	else if (type == LOK_KEYEVENT_KEYINPUT && char_code > 0)
 	{
 		g_unichar_to_utf8(static_cast<gunichar>(char_code), utf8);
@@ -288,6 +292,12 @@ static void doc_uno(LibreOfficeKitDocument *pThis, const char *command, const ch
 
 	log_line("unos", line);
 	g_free(line);
+	/* As LibreOffice: Copy fills the clipboard (here: all that was typed); Paste, dispatched, pastes nothing */
+	if (strcmp(command, ".uno:Copy") == 0)
+	{
+		g_free(doc->clipboard);
+		doc->clipboard = g_strdup(doc->typed->str);
+	}
 	if (strcmp(command, ".uno:Bold") == 0)
 	{
 		doc->bold = !doc->bold;
@@ -397,6 +407,42 @@ static void kit_destroy(LibreOfficeKit *pThis)
 {
 }
 
+/* The clipboard in LibreOffice's forms: OpenDocument (here "ODF:" and the text) and plain text */
+static int doc_get_clipboard(LibreOfficeKitDocument *pThis, const char **wanted, size_t *count, char ***mimes, size_t **sizes, char ***streams)
+{
+	FakeDoc *doc = reinterpret_cast<FakeDoc *>(pThis);
+
+	*count = 0;
+	*mimes = nullptr;
+	*sizes = nullptr;
+	*streams = nullptr;
+	if (!doc->clipboard)
+		return 1;
+	*count = 2;
+	*mimes = static_cast<char **>(malloc(2 * sizeof(char *)));
+	*sizes = static_cast<size_t *>(malloc(2 * sizeof(size_t)));
+	*streams = static_cast<char **>(malloc(2 * sizeof(char *)));
+	(*mimes)[0] = strdup("application/vnd.oasis.opendocument.text-flat-xml");
+	(*streams)[0] = g_strdup_printf("ODF:%s", doc->clipboard);
+	(*mimes)[1] = strdup("text/plain;charset=utf-8");
+	(*streams)[1] = g_strdup(doc->clipboard);
+	(*sizes)[0] = strlen((*streams)[0]);
+	(*sizes)[1] = strlen((*streams)[1]);
+	return 1;
+}
+
+/* As paste(): the data in place, OpenDocument marked as such */
+static bool doc_paste(LibreOfficeKitDocument *pThis, const char *mime, const char *data, size_t size)
+{
+	FakeDoc *doc = reinterpret_cast<FakeDoc *>(pThis);
+	std::string text(data, size);
+
+	if (strcmp(mime, "application/vnd.oasis.opendocument.text-flat-xml") == 0)
+		text = "{" + text + "}";
+	typed_append(doc, text.c_str());
+	return true;
+}
+
 static LibreOfficeKitClass kit_class;
 static LibreOfficeKit kit;
 
@@ -437,6 +483,8 @@ extern "C" LibreOfficeKit *libreofficekit_hook_2(const char *install_path, const
 	doc_class.initializeForRendering = doc_init_rendering;
 	doc_class.registerCallback = doc_register_callback;
 	doc_class.paintPartTile = doc_paint_part;
+	doc_class.getClipboard = doc_get_clipboard;
+	doc_class.paste = doc_paste;
 	doc_class.postKeyEvent = doc_key;
 	doc_class.postMouseEvent = doc_mouse;
 	doc_class.postUnoCommand = doc_uno;

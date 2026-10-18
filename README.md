@@ -110,6 +110,10 @@ tiles it painted, which it keeps by part. The first key typed into a slide's
 text box starts editing it; while LibreOffice does that, a key posted after
 it can overtake the ones posted before it, so `office-session` sends that
 key alone and waits until LibreOffice shows the cursor before going on.
+`.uno:Paste` is not dispatched to LibreOffice, where it pastes nothing: the
+clipboard's contents are handed to `paste()` instead, as Collabora Online
+does. A piece of one line goes in as plain text, so it lands where the
+cursor is; lines go in as OpenDocument, which keeps their formatting.
 
 Checks
 ------

@@ -31,7 +31,7 @@ GLIB_LIBS=$(pkg-config --libs glib-2.0)
 WARN="-Wall -Wextra -Wno-unused-parameter -Werror"
 MODES=${MODES:-"convert coalesce errors kind changed busy sigterm disconnect sweep
        fail-loadfail fail-savefail fail-savelie fail-crash fail-hang fail-initfail
-       session session-typing session-errors session-crash session-hang session-idle session-abandon session-loadfail session-sigterm"}
+       session session-typing session-clipboard session-errors session-crash session-hang session-idle session-abandon session-loadfail session-sigterm"}
 # BUILDS: a subset of "asan-gcc asan-clang tsan plain", for quick runs
 BUILDS=${BUILDS:-"asan-gcc asan-clang tsan plain"}
 fail=0
