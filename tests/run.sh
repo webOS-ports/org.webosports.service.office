@@ -30,7 +30,8 @@ GLIB_CFLAGS=$(pkg-config --cflags glib-2.0)
 GLIB_LIBS=$(pkg-config --libs glib-2.0)
 WARN="-Wall -Wextra -Wno-unused-parameter -Werror"
 MODES=${MODES:-"convert coalesce errors kind changed busy sigterm disconnect sweep
-       fail-loadfail fail-savefail fail-savelie fail-crash fail-hang fail-initfail"}
+       fail-loadfail fail-savefail fail-savelie fail-crash fail-hang fail-initfail
+       session session-typing session-clipboard session-errors session-crash session-hang session-idle session-abandon session-loadfail session-sigterm"}
 # BUILDS: a subset of "asan-gcc asan-clang tsan plain", for quick runs
 BUILDS=${BUILDS:-"asan-gcc asan-clang tsan plain"}
 fail=0
@@ -52,16 +53,21 @@ build() {
 	$cxx -g -O1 -fno-omit-frame-pointer $WARN "$@" -fPIC -shared -I"$LOK_INCLUDE" $GLIB_CFLAGS \
 		"$HERE/fakelok.cxx" -o "$w/lok/libmergedlo.so" $GLIB_LIBS &&
 	$cc -g -O1 -fno-omit-frame-pointer $WARN "$@" $GLIB_CFLAGS -c "$SRC/convert.c" -o "$w/convert.o" &&
+	$cc -g -O1 -fno-omit-frame-pointer $WARN "$@" $GLIB_CFLAGS -c "$SRC/protocol.c" -o "$w/protocol.o" &&
 	$cxx -g -O1 -fno-omit-frame-pointer $WARN "$@" -I"$LOK_INCLUDE" -I"$SRC" $GLIB_CFLAGS \
 		-DLO_PROGRAM_DIR="\"$w/lok\"" -DOFFICE_MAX_SOURCE=32 \
 		"$SRC/office-convert.cxx" "$w/convert.o" -o "$w/office-convert" $GLIB_LIBS -ldl &&
-	$cc -g -O1 -fno-omit-frame-pointer $WARN "$@" $GLIB_CFLAGS \
-		"$HERE/unit.c" "$w/convert.o" -o "$w/unit-test" $GLIB_LIBS &&
+	$cxx -g -O1 -fno-omit-frame-pointer $WARN "$@" -I"$LOK_INCLUDE" -I"$SRC" $GLIB_CFLAGS \
+		-DLO_PROGRAM_DIR="\"$w/lok\"" -DOFFICE_MAX_SOURCE=32 \
+		"$SRC/office-session.cxx" "$w/convert.o" "$w/protocol.o" -o "$w/office-session" $GLIB_LIBS -ldl -lpthread &&
+	$cc -g -O1 -fno-omit-frame-pointer $WARN "$@" $GLIB_CFLAGS -I"$SRC" \
+		"$HERE/unit.c" "$w/convert.o" "$w/protocol.o" -o "$w/unit-test" $GLIB_LIBS &&
 	$cc -g -O1 -fno-omit-frame-pointer $WARN "$@" -I"$HERE/harness/include" -I"$HERE/harness" -I"$SRC" $GLIB_CFLAGS \
 		-DOFFICED_C="\"$SRC/officed.c\"" -DWORK_DIR="\"$w\"" -DFAKELOK_DIR="\"$w/lok\"" \
 		-DOFFICE_ROOT="\"$w/root\"" -DOFFICE_CACHE_DIR="\"$w/root/.cache/org.webosports.service.office\"" \
 		-DOFFICE_HELPER="\"$w/office-convert\"" -DOFFICE_TIMEOUT_S=1 -DOFFICE_IDLE_S=1 -DOFFICE_MAX_SOURCE=32 \
-		"$HERE/harness/test.c" "$HERE/harness/shim.c" "$w/convert.o" -o "$w/officed-test" $GLIB_LIBS ||
+		-DOFFICE_SESSION_HELPER="\"$w/office-session\"" -DOFFICE_SESSION_IDLE_S=2 -DOFFICE_SESSION_REPLY_S=1 \
+		"$HERE/harness/test.c" "$HERE/harness/shim.c" "$w/convert.o" "$w/protocol.o" -o "$w/officed-test" $GLIB_LIBS ||
 	{ echo "FAIL build $name"; fail=1; return 1; }
 }
 
@@ -76,7 +82,7 @@ run() {
 		echo "FAIL $name unit"; tail -40 "$w/unit.log"; fail=1
 	fi
 	for m in $MODES; do
-		rm -rf "$w/root" && mkdir -p "$w/root"
+		rm -rf "$w/root" "$w/lok/unos" && mkdir -p "$w/root"
 		if "$@" "$w/officed-test" "$m" >"$w/$m.log" 2>&1; then
 			echo "PASS $name $m"
 		else

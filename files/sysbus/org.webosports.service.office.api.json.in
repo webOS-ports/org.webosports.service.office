@@ -1,5 +1,16 @@
 {
     "office.operation": [
-        "org.webosports.service.office/convert"
+        "org.webosports.service.office/convert",
+        "org.webosports.service.office/open",
+        "org.webosports.service.office/events",
+        "org.webosports.service.office/paintTile",
+        "org.webosports.service.office/postKey",
+        "org.webosports.service.office/postMouse",
+        "org.webosports.service.office/uno",
+        "org.webosports.service.office/extTextInput",
+        "org.webosports.service.office/setPart",
+        "org.webosports.service.office/info",
+        "org.webosports.service.office/save",
+        "org.webosports.service.office/close"
     ]
 }

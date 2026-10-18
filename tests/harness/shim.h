@@ -21,3 +21,7 @@ int shim_bad_replies(void);
 /* Statuses pushed to subscribers so far, "key payload" per line (g_free it) */
 char *shim_posts(void);
 void shim_free_posts(void);
+/* Whether LSSubscriptionAdd() was called with key */
+bool shim_subscribed(const char *key);
+/* The subscriber of key goes away; payload is its events call's */
+void shim_cancel(const char *key, const char *payload);

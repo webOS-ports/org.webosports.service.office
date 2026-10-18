@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Unit tests for src/convert.c, in a work directory of their own:
+ * Unit tests for src/convert.c and src/protocol.c, in a work directory of their own:
  *
  *   unit <work-dir>
  *
@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "../src/convert.h"
+#include "../src/protocol.h"
 
 static int failures = 0;
 
@@ -351,6 +352,50 @@ static void test_publish(void)
 	g_free(target);
 }
 
+/* As on vfat, where publishing moves the result */
+static void test_publish_move(void)
+{
+	char *staged = at("moved.odt"), *target = at("moved-target.odt"), *data = NULL;
+
+	put(staged, "first");
+	CHECK(office_publish_move(staged, target) == 0, "move");
+	CHECK(!g_file_test(staged, G_FILE_TEST_EXISTS), "the staged file is moved");
+	put(staged, "second");
+	CHECK(office_publish_move(staged, target) == EEXIST, "second move must not replace");
+	CHECK(g_file_get_contents(target, &data, NULL, NULL) && strcmp(data, "first") == 0,
+	      "target replaced: %s", data);
+	g_free(data);
+	g_free(staged);
+	g_free(target);
+}
+
+/* As on the TouchPad's kernel, which has no RENAME_NOREPLACE */
+static void test_publish_claim(void)
+{
+	char *staged = at("claimed.odt"), *target = at("claimed-target.odt"), *data = NULL;
+
+	put(staged, "first");
+	CHECK(office_publish_claim(staged, target) == 0, "claim");
+	CHECK(!g_file_test(staged, G_FILE_TEST_EXISTS), "the staged file is moved");
+	CHECK(g_file_get_contents(target, &data, NULL, NULL) && strcmp(data, "first") == 0, "target: %s", data);
+	g_free(data);
+	data = NULL;
+	put(staged, "second");
+	CHECK(office_publish_claim(staged, target) == EEXIST, "second claim must not replace");
+	CHECK(g_file_get_contents(target, &data, NULL, NULL) && strcmp(data, "first") == 0,
+	      "target replaced: %s", data);
+	CHECK(g_file_test(staged, G_FILE_TEST_EXISTS), "the refused file is left");
+	g_free(data);
+	g_free(target);
+	/* The rename fails: the claimed name is not left behind, empty */
+	target = at("claimed-gone.odt");
+	unlink(staged);
+	CHECK(office_publish_claim(staged, target) == ENOENT, "nothing to publish");
+	CHECK(!g_file_test(target, G_FILE_TEST_EXISTS), "an empty claimed file is left");
+	g_free(staged);
+	g_free(target);
+}
+
 static void test_remove_tree(void)
 {
 	char *dir = at("tree"), *deep = g_build_filename(dir, "a", "b", NULL);
@@ -436,6 +481,67 @@ static void test_trim(void)
 	g_free(dir);
 }
 
+/* Fields with tabs, newlines, backslashes and UTF-8 come back as they went */
+static void test_protocol_lines(void)
+{
+	const char *const fields[] = { "R", "7", "ok", "a\tb", "line\nbreak", "back\\slash", "caf\xc3\xa9", "" };
+	char *line = office_proto_join(fields, G_N_ELEMENTS(fields));
+	char **back;
+	int n = 0;
+
+	CHECK(g_str_has_suffix(line, "\n") && strchr(line, '\n') == line + strlen(line) - 1, "one line: %s", line);
+	CHECK(strchr(line, '\t') != NULL, "tab separated");
+	line[strlen(line) - 1] = '\0';
+	back = office_proto_split(line, &n);
+	CHECK(back && n == (int)G_N_ELEMENTS(fields), "%d fields", n);
+	for (int i = 0; back && i < n && i < (int)G_N_ELEMENTS(fields); i++)
+	{
+		CHECK(strcmp(back[i], fields[i]) == 0, "field %d: \"%s\", want \"%s\"", i, back[i], fields[i]);
+	}
+	g_strfreev(back);
+	g_free(line);
+
+	/* An empty line, and one that is too long, are not split */
+	back = office_proto_split("", &n);
+	CHECK(back == NULL && n == 0, "empty line split");
+	{
+		char *huge = g_malloc(OFFICE_PROTO_MAX_LINE + 2);
+		memset(huge, 'x', OFFICE_PROTO_MAX_LINE + 1);
+		huge[OFFICE_PROTO_MAX_LINE + 1] = '\0';
+		back = office_proto_split(huge, &n);
+		CHECK(back == NULL, "too long a line split");
+		g_free(huge);
+	}
+}
+
+static void test_protocol_ints(void)
+{
+	long v = 99;
+
+	CHECK(office_proto_int("42", 0, 100, &v) && v == 42, "42");
+	CHECK(office_proto_int("-5", -10, 10, &v) && v == -5, "-5");
+	CHECK(!office_proto_int("101", 0, 100, &v), "over max");
+	CHECK(!office_proto_int("-1", 0, 100, &v), "under min");
+	CHECK(!office_proto_int("4x", 0, 100, &v), "trailing junk");
+	CHECK(!office_proto_int("", 0, 100, &v), "empty");
+	CHECK(!office_proto_int(NULL, 0, 100, &v), "NULL");
+	CHECK(!office_proto_int("99999999999999999999", 0, 100, &v), "overflow");
+	CHECK(v == -5, "a failed parse leaves the value");
+}
+
+static void test_protocol_uno(void)
+{
+	CHECK(office_uno_allowed(".uno:Bold") && office_uno_allowed(".uno:Undo") && office_uno_allowed(".uno:InsertPage"),
+	      "editing commands");
+	CHECK(!office_uno_allowed(".uno:SaveAs") && !office_uno_allowed(".uno:Save") && !office_uno_allowed(".uno:Open") &&
+	      !office_uno_allowed(".uno:Print") && !office_uno_allowed(".uno:ExportToPDF") &&
+	      !office_uno_allowed(".uno:InsertGraphic") && !office_uno_allowed(".uno:RunMacro"), "file and macro commands");
+	CHECK(!office_uno_allowed(".uno:Bold ") && !office_uno_allowed(".uno:bold") && !office_uno_allowed("") &&
+	      !office_uno_allowed(NULL), "near misses");
+	CHECK(strcmp(office_callback_name(0), "invalidate") == 0 && strcmp(office_callback_name(8), "state") == 0 &&
+	      strcmp(office_callback_name(999), "other") == 0, "callback names");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2)
@@ -454,8 +560,13 @@ int main(int argc, char **argv)
 	test_extension();
 	test_stage();
 	test_publish();
+	test_publish_move();
+	test_publish_claim();
 	test_remove_tree();
 	test_trim();
+	test_protocol_lines();
+	test_protocol_ints();
+	test_protocol_uno();
 
 	g_free(root);
 	free(work);

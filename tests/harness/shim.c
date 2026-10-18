@@ -589,6 +589,64 @@ bool LSSubscriptionProcess(LSHandle *sh, LSMessage *msg, bool *subscribed, LSErr
 
 static GMutex posts_lock;
 static GString *posts = NULL;
+static GHashTable *subscribed_keys = NULL;
+
+/* The bus keeps the message for later posts: so does this, until the end */
+bool LSSubscriptionAdd(LSHandle *sh, const char *key, LSMessage *msg, LSError *error)
+{
+	g_mutex_lock(&posts_lock);
+	if (!subscribed_keys)
+		subscribed_keys = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	g_hash_table_add(subscribed_keys, g_strdup(key));
+	g_mutex_unlock(&posts_lock);
+	return true;
+}
+
+static LSFilterFunc cancel_function = NULL;
+static void *cancel_ctx = NULL;
+
+bool LSSubscriptionSetCancelFunction(LSHandle *sh, LSFilterFunc cancelFunction, void *ctx, LSError *error)
+{
+	cancel_function = cancelFunction;
+	cancel_ctx = ctx;
+	return true;
+}
+
+unsigned int LSSubscriptionGetHandleSubscribersCount(LSHandle *sh, const char *key)
+{
+	return shim_subscribed(key) ? 1 : 0;
+}
+
+/* As the bus does when a subscriber goes: the cancel function first, then the key is dropped */
+void shim_cancel(const char *key, const char *payload)
+{
+	LSMessage *msg = g_new0(LSMessage, 1);
+
+	msg->refs = 1;
+	msg->payload = g_strdup(payload);
+	g_atomic_int_inc(&live_messages);
+
+	if (cancel_function)
+	{
+		(void)cancel_function(&the_handle, msg, cancel_ctx);
+	}
+
+	g_mutex_lock(&posts_lock);
+	if (subscribed_keys)
+		g_hash_table_remove(subscribed_keys, key);
+	g_mutex_unlock(&posts_lock);
+	LSMessageUnref(msg);
+}
+
+bool shim_subscribed(const char *key)
+{
+	bool yes;
+
+	g_mutex_lock(&posts_lock);
+	yes = subscribed_keys && g_hash_table_contains(subscribed_keys, key);
+	g_mutex_unlock(&posts_lock);
+	return yes;
+}
 
 /* Every status pushed to subscribers, one per line, for the tests to read */
 bool LSSubscriptionReply(LSHandle *sh, const char *key, const char *payload, LSError *error)
@@ -623,6 +681,9 @@ void shim_free_posts(void)
 	if (posts)
 		g_string_free(posts, TRUE);
 	posts = NULL;
+	if (subscribed_keys)
+		g_hash_table_unref(subscribed_keys);
+	subscribed_keys = NULL;
 	g_mutex_unlock(&posts_lock);
 }
 

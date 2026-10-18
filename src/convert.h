@@ -89,9 +89,23 @@ char *office_stage_source(const OfficeSource *src, off_t max_size, const char *d
 
 /*
  * Makes target a second name of staged (link(2)): an existing target is never
- * replaced. 0, or an errno value (EEXIST: someone else made it first).
+ * replaced. 0, or an errno value (EEXIST: someone else made it first). On a
+ * file system without hard links (vfat) staged is moved to target instead,
+ * by office_publish_move(), so it is gone afterwards.
  */
 int office_publish(const char *staged, const char *target);
+
+/*
+ * staged renamed to target, which is never replaced (RENAME_NOREPLACE, or
+ * office_publish_claim() where that is missing); 0 or an errno value
+ */
+int office_publish_move(const char *staged, const char *target);
+
+/*
+ * The name target made with O_EXCL, empty, then staged renamed over it: what
+ * is replaced is only that empty file of ours. 0 or an errno value.
+ */
+int office_publish_claim(const char *staged, const char *target);
 
 /*
  * Removes a job directory and what is in it, without following links. Only
